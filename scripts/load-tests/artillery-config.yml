@@ -1,0 +1,63 @@
+config:
+  target: 'http://localhost:8000'
+  phases:
+    - duration: 60
+      arrivalRate: 10
+      name: "Warm up"
+    - duration: 120
+      arrivalRate: 50
+      name: "Normal load"
+    - duration: 180
+      arrivalRate: 100
+      name: "High load"
+    - duration: 300
+      arrivalRate: 200
+      name: "Peak load"
+    - duration: 120
+      arrivalRate: 500
+      name: "Stress test"
+  payload:
+    path: "./test-users.csv"
+    fields:
+      - "username"
+      - "email"
+      - "password"
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+
+scenarios:
+  - name: "Social Media Load Test"
+    weight: 100
+    flow:
+      - post:
+          url: "/api/v1/users/register"
+          json:
+            username: "{{ username }}"
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.user.id"
+              as: "userId"
+      - post:
+          url: "/api/v1/users/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      - loop:
+          - get:
+              url: "/api/v1/posts"
+          - post:
+              url: "/api/v1/posts"
+              headers:
+                Authorization: "Bearer {{ authToken }}"
+              json:
+                image_url: "https://picsum.photos/800/600?random={{ $randomInt(1, 1000) }}"
+                caption: "Artillery load test post {{ $timestamp }}"
+          - get:
+              url: "/api/v1/posts"
+          - think: 1
+        count: 5

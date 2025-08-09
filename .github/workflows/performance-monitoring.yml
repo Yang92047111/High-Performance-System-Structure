@@ -1,0 +1,95 @@
+name: Performance Monitoring
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Run every 6 hours
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  performance-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up environment
+      run: |
+        # Start services for testing
+        docker compose up -d --build
+        sleep 60
+
+    - name: Install k6
+      run: |
+        sudo gpg -k
+        sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+        echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+        sudo apt-get update
+        sudo apt-get install k6
+
+    - name: Run performance tests
+      run: |
+        mkdir -p results
+        
+        # Run basic load test
+        k6 run --out json=results/perf-basic.json scripts/load-tests/k6-basic-load.js
+        
+        # Run WebSocket test
+        k6 run --out json=results/perf-websocket.json scripts/load-tests/k6-websocket-test.js
+
+    - name: Analyze results
+      run: |
+        # Extract key metrics
+        echo "## Performance Test Results" > results/performance-report.md
+        echo "Date: $(date)" >> results/performance-report.md
+        echo "" >> results/performance-report.md
+        
+        # Basic load test results
+        echo "### Basic Load Test" >> results/performance-report.md
+        echo "- Average Response Time: $(cat results/perf-basic.json | jq -r '.metrics.http_req_duration.avg')ms" >> results/performance-report.md
+        echo "- P95 Response Time: $(cat results/perf-basic.json | jq -r '.metrics.http_req_duration.p95')ms" >> results/performance-report.md
+        echo "- Error Rate: $(cat results/perf-basic.json | jq -r '.metrics.http_req_failed.rate * 100')%" >> results/performance-report.md
+        echo "- Requests/sec: $(cat results/perf-basic.json | jq -r '.metrics.http_reqs.rate')" >> results/performance-report.md
+        echo "" >> results/performance-report.md
+        
+        # WebSocket test results
+        echo "### WebSocket Test" >> results/performance-report.md
+        echo "- Connection Errors: $(cat results/perf-websocket.json | jq -r '.metrics.ws_connection_errors.rate * 100')%" >> results/performance-report.md
+        echo "- Messages Sent: $(cat results/perf-websocket.json | jq -r '.metrics.ws_messages_sent.count')" >> results/performance-report.md
+        echo "- Messages Received: $(cat results/perf-websocket.json | jq -r '.metrics.ws_messages_received.count')" >> results/performance-report.md
+
+    - name: Upload results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-results-${{ github.run_number }}
+        path: results/
+
+    - name: Check performance regression
+      run: |
+        # Compare with baseline (implement your logic here)
+        # For now, just check if error rate is acceptable
+        ERROR_RATE=$(cat results/perf-basic.json | jq -r '.metrics.http_req_failed.rate')
+        if (( $(echo "$ERROR_RATE > 0.05" | bc -l) )); then
+          echo "Performance regression detected: Error rate is $ERROR_RATE"
+          exit 1
+        fi
+        
+        # Check response time
+        P95_TIME=$(cat results/perf-basic.json | jq -r '.metrics.http_req_duration.p95')
+        if (( $(echo "$P95_TIME > 500" | bc -l) )); then
+          echo "Performance regression detected: P95 response time is ${P95_TIME}ms"
+          exit 1
+        fi
+
+    - name: Notify on regression
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        text: '⚠️ Performance regression detected in Social Media App!'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    - name: Clean up
+      if: always()
+      run: |
+        docker compose down -v

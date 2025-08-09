@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: social-media-config
+  namespace: social-media
+data:
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_NAME: "social_media"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  MINIO_ENDPOINT: "minio-service:9000"
+  MINIO_BUCKET: "social-media-images"
+  PORT: "8000"
